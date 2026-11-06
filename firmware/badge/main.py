@@ -1,6 +1,12 @@
+import machine
 import micropython
 import time
 import asyncio as aio
+import lvgl
+
+# A display left over from before a soft reset points into the wiped heap
+if lvgl.display_get_default() is not None:
+    machine.reset()
 
 try:
     time.sleep(0.5)
@@ -45,7 +51,7 @@ async def main():
     if configs['load_counter'] == 42:
         leds.fill((1,1,0))
         display.clear()
-        display.draw_png(f"/data/graphics/never-epd.png")
+        display.draw_png(f"/data/graphics/never_epd.png")
         display.update()
         leds.fill((0,1,0))
 
@@ -66,4 +72,11 @@ async def main():
 if __name__ == "__main__":
 
 
-    aio.run(main())
+    try:
+        aio.run(main())
+    finally:
+        # Must happen before the heap is wiped. deinit alone crashes.
+        _disp = lvgl.display_get_default()
+        if _disp:
+            _disp.delete()
+        lvgl.deinit()
