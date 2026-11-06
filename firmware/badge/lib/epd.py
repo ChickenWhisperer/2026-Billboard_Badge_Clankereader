@@ -32,13 +32,15 @@ import asyncio as aio
 import btree
 import framebuf
 import gc
-from machine import Pin, SoftSPI
+from machine import Pin, SPI, SoftSPI
+import micropython
 from micropython import const
 import time
 
 import lvgl
 
 from lib.large_png import show_png
+from lib.led_bar import leds
 
 EPD_CS1_PIN = Pin(13, mode=Pin.OUT)
 EPD_CS2_PIN = Pin(3, mode=Pin.OUT)
@@ -74,20 +76,92 @@ def reverse_byte(byte: int) -> int:
     return byte
 
 
+# Pre-computed 256-byte LUT for instant bit reversal
+_REVERSE_LUT = bytearray(256)
+for _i in range(256):
+    _REVERSE_LUT[_i] = reverse_byte(_i)
+
+
+@micropython.viper
+def _viper_lv_flush(
+    src: ptr8,
+    fb_black: ptr8,
+    fb_red: ptr8,
+    x1: int,
+    y1: int,
+    w: int,
+    h: int,
+    stride: int,
+):
+    width = 960
+    for row in range(h):
+        base = (y1 + row) * width + x1
+        row_off = row * stride
+        for col in range(w):
+            i = row_off + (col << 1)
+            c = src[i] | (src[i + 1] << 8)  # RGB565, little-endian
+            idx = base + col
+            byte_idx = idx >> 3
+            mask = 1 << (7 - (idx & 7))
+            clear = mask ^ 0xFF
+            bits = c & 0x8410
+            if bits == 0x8000:
+                fb_red[byte_idx] |= mask
+                fb_black[byte_idx] &= clear
+            elif bits == 0:
+                fb_black[byte_idx] |= mask
+                fb_red[byte_idx] &= clear
+            else:
+                fb_black[byte_idx] &= clear
+                fb_red[byte_idx] &= clear
+
+
+@micropython.viper
+def _fast_split_and_reverse(src_fb: ptr8, dst_left: ptr8, dst_right: ptr8, lut: ptr8):
+    for r in range(672):
+        src_row = r * 120
+        dst_row = r * 60
+        for c in range(60):
+            dst_left[dst_row + c] = lut[src_fb[src_row + c]]
+            dst_right[dst_row + c] = lut[src_fb[src_row + 60 + c]]
+
+
+@micropython.viper
+def _fast_split_no_reverse(src_fb: ptr8, dst_left: ptr8, dst_right: ptr8):
+    for r in range(672):
+        src_row = r * 120
+        dst_row = r * 60
+        for c in range(60):
+            dst_left[dst_row + c] = src_fb[src_row + c]
+            dst_right[dst_row + c] = src_fb[src_row + 60 + c]
+
+
 class EPaperDisplay:
     width = display_width
     height = display_height
 
     def __init__(self) -> None:
-        print("Initializing E-Paper Display")
+        print("Initializing E-Paper Display (Fast Hardware SPI + Viper)")
         EPD_DC_PIN.value(True)
         EPD_RST_PIN.value(True)
         EPD_CS1_PIN.value(True)
         EPD_CS2_PIN.value(True)
-        self.spi = SoftSPI(
-            baudrate=8_000_000, sck=EPD_SCL_PIN, mosi=EPD_SDA_PIN, miso=EPD_SPI_MISO_PIN
-        )
-        self.spi.init()
+        try:
+            self.spi = SPI(
+                1,
+                baudrate=20_000_000,
+                sck=EPD_SCL_PIN,
+                mosi=EPD_SDA_PIN,
+                miso=EPD_SPI_MISO_PIN,
+            )
+        except Exception:
+            self.spi = SoftSPI(
+                baudrate=8_000_000,
+                sck=EPD_SCL_PIN,
+                mosi=EPD_SDA_PIN,
+                miso=EPD_SPI_MISO_PIN,
+            )
+            self.spi.init()
 
         try:
             with open("/data/hwconf", "rb") as f:
@@ -102,6 +176,8 @@ class EPaperDisplay:
 
         # The framebuffers are set and display should be updated.
         self._framebuffer_ready = aio.Event()
+        self._png_blink = False
+        self._refreshing_hw = False
 
         """Each byte is a mini-row of 8 bits for pixels of one color (1 sets the color, 0 is white)
         Bytes are in rows across the screen, as seen on the badge
@@ -125,7 +201,10 @@ class EPaperDisplay:
         self._display_updated.set()
         gc.collect()
 
-        # Set up lvgl
+        # Set up lvgl (deinit first if soft-rebooted so C pointers don't corrupt)
+        if hasattr(lvgl, "is_initialized") and lvgl.is_initialized():
+            if hasattr(lvgl, "deinit"):
+                lvgl.deinit()
         lvgl.init()
         # Give LVGL a buffer 2-bytes-per-pixel for RGB565 format
         self._lv_draw_buf = bytearray(display_width * display_height * 2)
@@ -133,7 +212,9 @@ class EPaperDisplay:
         self.lv_display = lvgl.display_create(display_width, display_height)
         self.lv_display.set_color_format(lvgl.COLOR_FORMAT.RGB565)
         self.lv_display.set_buffers(
-            self._lv_draw_buf, None, len(self._lv_draw_buf),
+            self._lv_draw_buf,
+            None,
+            len(self._lv_draw_buf),
             lvgl.DISPLAY_RENDER_MODE.PARTIAL,
         )
         self.lv_display.set_flush_cb(self._lv_flush)
@@ -141,7 +222,9 @@ class EPaperDisplay:
         self.lv_screen.set_size(display_width, display_height)
 
     def _lv_flush(self, disp, area, color_p):
-        print("Calling EPaperDisplay._lv_flush")
+        print("Calling EPaperDisplay._lv_flush (Viper)")
+        leds[0] = (0, 0, 50)
+        leds.write()
         x1, y1 = area.x1, area.y1
         w = area.x2 - x1 + 1
         h = area.y2 - y1 + 1
@@ -150,33 +233,23 @@ class EPaperDisplay:
         except AttributeError:
             stride = w * 2
         src = color_p.__dereference__(stride * h)
-        width = display_width
-        for row in range(h):
-            base = (y1 + row) * width + x1
-            row_off = row * stride
-            for col in range(w):
-                i = row_off + col * 2
-                c = src[i] | (src[i + 1] << 8)  # RGB565, little-endian
-                r = (c >> 11) & 0x1F
-                g = (c >> 5) & 0x3F
-                b = c & 0x1F
-                idx = base + col
-                byte = idx >> 3
-                mask = 1 << (7 - (idx & 7))
-                clear = mask ^ 0xFF
-                if (r & 0x10) and not (g & 0x20) and not (b & 0x10):
-                    self._framebuffer_red[byte] |= mask
-                    self._framebuffer_black[byte] &= clear
-                elif not (r & 0x10) and not (g & 0x20) and not (b & 0x10):
-                    self._framebuffer_black[byte] |= mask
-                    self._framebuffer_red[byte] &= clear
-                else:
-                    self._framebuffer_black[byte] &= clear
-                    self._framebuffer_red[byte] &= clear
+        _viper_lv_flush(
+            src,
+            self._framebuffer_black,
+            self._framebuffer_red,
+            x1,
+            y1,
+            w,
+            h,
+            stride,
+        )
+        leds[0] = (0, 0, 0)
+        leds.write()
         disp.flush_ready()
 
     def update(self):
         """Done updating the framebuffer, update the display with the contents"""
+        self._display_updated.clear()
         self._framebuffer_ready.set()
 
     def clear(self):
@@ -198,12 +271,24 @@ class EPaperDisplay:
                 self.red.pixel((col + img_c), (row + img_r), int(red))
 
     def draw_png(self, filename: str, row: int = 0, col: int = 0):
-
         gc.collect()
+        self._png_blink = not self._png_blink
+        leds[0] = (0, 0, 50) if self._png_blink else (0, 0, 10)
+        leds.write()
         print(f"Loading {filename} This will take a while... {time.time()}")
         show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col)
+        leds[0] = (0, 0, 0)
+        leds.write()
         print("Done loading png")
         gc.collect()
+
+    async def _blink_red_while_refreshing(self):
+        state = False
+        while self._refreshing_hw:
+            state = not state
+            leds[0] = (40, 0, 0) if state else (0, 0, 0)
+            leds.write()
+            await aio.sleep_ms(200)
 
     async def run(self):
         black_left = bytearray(half_frame_one_color_size)
@@ -213,42 +298,47 @@ class EPaperDisplay:
         while True:
             if self._framebuffer_ready.is_set():
                 self._display_updated.clear()
-                fbk = memoryview(self._framebuffer_black)
-                fbr = memoryview(self._framebuffer_red)
-                for row in range(display_height):
-                    black_left[
-                        row * display_half_width_bytes : (row + 1)
-                        * display_half_width_bytes
-                    ] = fbk[
-                        row * display_width_bytes : row * display_width_bytes
-                        + display_half_width_bytes
-                    ]
-                    black_right[
-                        row * display_half_width_bytes : (row + 1)
-                        * display_half_width_bytes
-                    ] = fbk[
-                        row * display_width_bytes + display_half_width_bytes : (row + 1)
-                        * display_width_bytes
-                    ]
-                    red_left[
-                        row * display_half_width_bytes : (row + 1)
-                        * display_half_width_bytes
-                    ] = fbr[
-                        row * display_width_bytes : row * display_width_bytes
-                        + display_half_width_bytes
-                    ]
-                    red_right[
-                        row * display_half_width_bytes : (row + 1)
-                        * display_half_width_bytes
-                    ] = fbr[
-                        row * display_width_bytes + display_half_width_bytes : (row + 1)
-                        * display_width_bytes
-                    ]
-                await self.global_update(black_left, red_left, black_right, red_right)
+                t0 = time.ticks_ms()
+                if self._reverse_fb_bits:
+                    _fast_split_and_reverse(
+                        self._framebuffer_black, black_left, black_right, _REVERSE_LUT
+                    )
+                    _fast_split_and_reverse(
+                        self._framebuffer_red, red_left, red_right, _REVERSE_LUT
+                    )
+                else:
+                    _fast_split_no_reverse(
+                        self._framebuffer_black, black_left, black_right
+                    )
+                    _fast_split_no_reverse(
+                        self._framebuffer_red, red_left, red_right
+                    )
+                print("Viper split & reverse ms:", time.ticks_diff(time.ticks_ms(), t0))
+
+                leds.clear()
+                self._refreshing_hw = True
+                _blink_task = aio.create_task(self._blink_red_while_refreshing())
+
+                old_rev = self._reverse_fb_bits
+                self._reverse_fb_bits = False
+                try:
+                    await self.global_update(
+                        black_left, red_left, black_right, red_right
+                    )
+                finally:
+                    self._reverse_fb_bits = old_rev
+                    self._refreshing_hw = False
+                    await aio.sleep_ms(50)
+
+                leds[0] = (0, 40, 0)
+                leds.write()
+                await aio.sleep_ms(400)
+                leds.clear()
+
                 self._framebuffer_ready.clear()
                 gc.collect()
                 self._display_updated.set()
-            await aio.sleep_ms(100)
+            await aio.sleep_ms(50)
 
     async def global_update(
         self,
@@ -262,8 +352,8 @@ class EPaperDisplay:
         tick = time.ticks_ms()
         self._send_images(black_left, red_left, black_right, red_right)
         tock = time.ticks_ms()
-        print(tock-tick)
-        
+        print(tock - tick)
+
         print("display working")
         tick = time.ticks_ms()
         await self.cog_initial()
@@ -272,8 +362,7 @@ class EPaperDisplay:
         await self._dcdc_soft_shutdown()
         print("Done updating display")
         tock = time.ticks_ms()
-        print(tock-tick)
-
+        print(tock - tick)
 
     async def cog_initial(self):
         self._send_index_data(0x05, [0x7D])
@@ -419,7 +508,6 @@ class EPaperDisplay:
         self._send_index_data_right(0x10, black_right)  # black frame for right half
         self._send_index_data_right(0x12, ram_rw_data)  # RAM_RW for right half
         self._send_index_data_right(0x11, red_right)  # Red frame for right half
-
 
     async def _dcdc_soft_start(self):
         """DC-DC soft-start command
