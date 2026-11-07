@@ -30,12 +30,14 @@ class Sao:
         self.target = None
 
     def set_address(self, addr: int):
-        self.address = 0
-        self.target = machine.I2CTarget(
-            id=SAO_I2C_BUS, addr=self.address, scl=SAO_I2C_SCL, sda=SAO_I2C_SDA
+        self.address = addr
+        self.target = machine.I2C(
+            SAO_I2C_BUS, 
+            scl=machine.Pin(SAO_I2C_SCL), 
+            sda=machine.Pin(SAO_I2C_SDA)
         )
 
-    def readfrom(self, nbytes, stop=True, /):
+    def readfrom(self, nbytes, stop=True):
         if self.address is None:
             raise ValueError("No address set, unable to read from target")
         return i2c.readfrom(self.address, nbytes, stop)
@@ -49,3 +51,4 @@ class Sao:
 SAO1 = Sao(SAO1_GPIO1, SAO1_GPIO2)
 SAO2 = Sao(SAO2_GPIO1, SAO2_GPIO2)
 SAO3 = Sao(SAO3_GPIO1, SAO3_GPIO2)
+

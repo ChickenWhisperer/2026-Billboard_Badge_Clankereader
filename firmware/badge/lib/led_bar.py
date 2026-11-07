@@ -209,29 +209,30 @@ class LedBar:
         self.pause()
         self.clear()
 
-        ## Fill up LEDs with background color relevant to their menu page, up to the filled-up number of slots
-        current_page = app_index // 8
-        current_LED  = app_index % 8
+        ## Each page of NUM_LEDS apps gets its own color. With more apps than
+        ## colors the palette wraps around, so any number of apps is usable.
+        current_page = app_index // NUM_LEDS
+        current_LED  = app_index % NUM_LEDS
+        palette_idx  = current_page % len(MENU_BACKGROUND_COLORS)
 
         ## Full fill if the page is filled
-        if current_page < total_number_apps // 8:
-            self.fill(MENU_BACKGROUND_COLORS[current_page])
+        if current_page < total_number_apps // NUM_LEDS:
+            self.fill(MENU_BACKGROUND_COLORS[palette_idx])
         else:
             ## fill only up until the number of apps
-            for i in range(total_number_apps % 8):
-                self.leds[i] = MENU_BACKGROUND_COLORS[current_page]
+            for i in range(total_number_apps % NUM_LEDS):
+                self.leds[i] = MENU_BACKGROUND_COLORS[palette_idx]
 
-        self.leds[current_LED] = MENU_SELECTED_COLORS[current_page]
-        ## what happens when this overflows? (@_@) 
+        self.leds[current_LED] = MENU_SELECTED_COLORS[palette_idx % len(MENU_SELECTED_COLORS)]
         self.write()
 
     def submenu_display(self, item_index):
         ## Single LED in submenus
         self.pause()
         self.clear()
-        ## Different single LED color for every menu page
-        self.leds[item_index % 8] = SUBMENU_SELECTED_COLORS[item_index // 8]
-        ## what happens when this overflows? (@_@) 
+        ## Different single LED color for every menu page (wraps like the menu)
+        palette_idx = (item_index // NUM_LEDS) % len(SUBMENU_SELECTED_COLORS)
+        self.leds[item_index % NUM_LEDS] = SUBMENU_SELECTED_COLORS[palette_idx]
         self.write()
 
 
