@@ -22,7 +22,7 @@ The row of WS2812-compatible LEDs is on GPIO38
 ## Buttons
 
 * Menu +/-: GPIO40 / GPIO15
-* User A/B: GPIO39 / GPIO15
+* User A/B: GPIO39 / GPIO16
 
 # Applications
 In its out of the box configuration the badge can show the 2026 Supercon schedule, act as a digital name tag, and cycle through a built-in collection of art from Hackaday's incredible Art Director Joe Kim. If you come up with additional apps that you'd like to share, feel free to make a pull request.
