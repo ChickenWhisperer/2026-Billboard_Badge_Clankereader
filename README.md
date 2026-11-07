@@ -3,6 +3,8 @@
 # Badge Hardware
 The badge uses a 9.7 inch Pervasive Displays E2969JS0B1 electronic paper panel that was recycled from price tags which were destined for a now bankrupt German department store chain, coupled with an ESP32-S3 microcontroller.
 
+A printable snap-on back cover is in [hardware/back_cover](hardware/back_cover).
+
 ## Pins
 
 The board only has two truly free GPIOs
