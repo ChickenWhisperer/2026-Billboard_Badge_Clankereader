@@ -52,6 +52,7 @@ class LedBar:
     def set(self, value: list[tuple[int, int, int] | list[int]]):
         for i, led in enumerate(value):
             self.leds[i] = led
+        self.leds.write()
 
     def set_sequence(self, fn):
         """Sets a sequence to set to the LED bar.
