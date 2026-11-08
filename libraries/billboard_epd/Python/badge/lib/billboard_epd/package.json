@@ -1,0 +1,33 @@
+{
+  "version": "0.1.0-rc.1",
+  "urls": [
+    [
+      "billboard_epd/__init__.py",
+      "__init__.py"
+    ],
+    [
+      "billboard_epd/decay.py",
+      "decay.py"
+    ],
+    [
+      "billboard_epd/display.py",
+      "display.py"
+    ],
+    [
+      "billboard_epd/panel.py",
+      "panel.py"
+    ],
+    [
+      "billboard_epd/render.py",
+      "render.py"
+    ],
+    [
+      "billboard_epd/waveforms.py",
+      "waveforms.py"
+    ],
+    [
+      "billboard_epd/LICENSE",
+      "LICENSE"
+    ]
+  ]
+}

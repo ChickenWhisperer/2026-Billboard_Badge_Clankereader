@@ -1,0 +1,7 @@
+.work/
+**/build/
+**/__pycache__/
+*.pyc
+*.mpy
+display-driver/dist/
+**/sdkconfig.old
