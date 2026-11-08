@@ -49,6 +49,8 @@ class HTTPPollerApp(BaseApp):
         # Variable to hold network interface handle
         self.nic = network.WLAN(network.WLAN.IF_STA)
 
+        self.fetching: bool = False
+
         self.image_ready: bool = False
 
         # Variable to hold the last downloaded image
@@ -56,26 +58,29 @@ class HTTPPollerApp(BaseApp):
 
     async def fetch_image(self):
         for attempt in range(20):
-            print("attempt %d: connecting to network" % (attempt))
-            self.nic.active(True)
-            for credential in load(WLAN_CREDENTIALS_FILE):
-                ssid = credential["ssid"]
-                key = credential["key"]
-                print("attempting to connect to ssid %s with %s" % (ssid, key))
-                try:
-                    self.nic.connect(ssid, key)
-                    for _ in range(20):
-                        if self.nic.isconnected():
-                            break
-                        await aio.sleep(0.250)
-                except Exception as ex:
-                    print("failed connecting to ssid %s" % (ssid))
-                    sys.print_exception(ex)
-
             if not self.nic.isconnected():
-                self.nic.active(False)
-                print("failed to connect to any configured SSID")
-                return False
+                print("attempt %d: connecting to network" % (attempt))
+                self.nic.active(True)
+                for credential in load(WLAN_CREDENTIALS_FILE):
+                    ssid = credential["ssid"]
+                    key = credential["key"]
+                    print("attempting to connect to ssid %s with %s" % (ssid, key))
+                    try:
+                        self.nic.connect(ssid, key)
+                        for _ in range(20):
+                            if self.nic.isconnected():
+                                break
+                            await aio.sleep(0.250)
+                    except Exception as ex:
+                        print("failed connecting to ssid %s" % (ssid))
+                        sys.print_exception(ex)
+
+                if not self.nic.isconnected():
+                    self.nic.active(False)
+                    print("failed to connect to any configured SSID")
+                    return False
+
+            print("connected to network, assigned IP ", self.nic.ipconfig("addr4"))
 
             print("requesting %s" % (IMAGE_URL))
             response = requests.get(IMAGE_URL)
@@ -89,7 +94,7 @@ class HTTPPollerApp(BaseApp):
                 return False
 
             print("reading response content")
-            self.image_data = response.content
+            self.image_data = memoryview(response.content)
             self.image_ready = True
 
             print("disconnecting from network")
@@ -106,23 +111,37 @@ class HTTPPollerApp(BaseApp):
             self.image_data = None
 
     async def attempt_fetch_image(self):
-        if await self.fetch_image():
-            self.next_update_time = time.time() + self.update_interval_seconds
-        else:
+        self.fetching = True
+        try:
+            if await self.fetch_image():
+                self.next_update_time = time.time() + self.update_interval_seconds
+            else:
+                print(
+                    "update failed; waiting %d seconds before retry"
+                    % (self.retry_interval_seconds)
+                )
+                self.next_update_time = time.time() + self.retry_interval_seconds
+        except Exception as ex:
             print(
-                "update failed; waiting %d seconds before retry"
+                "update failed with exception; waiting %d seconds before retry"
                 % (self.retry_interval_seconds)
             )
+            sys.print_exception(ex)
             self.next_update_time = time.time() + self.retry_interval_seconds
+
+        self.fetching = False
 
     def run(self):
         """Add your app behavior here. Will be run in a while True loop."""
         if self.launched:  ## Setup
+            if self.nic.isconnected():
+                self.nic.disconnect()
+            self.nic.active(False)
             pass
         else:  ## Mainloop
             if self.image_ready:
                 self.display_image()
-            elif time.time() > self.next_update_time:
+            elif not self.fetching and time.time() > self.next_update_time:
                 aio.create_task(self.attempt_fetch_image())
             else:
                 await_pressed_buttons()
