@@ -38,14 +38,36 @@
          border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); }
   #status { min-height:1.4em; margin:10px 0 0; text-align:center; font-weight:600; }
   #status.err { color:var(--red); }
-  .hidden { display:none; }
+  .hidden { display:none !important; }
+  h2 { font-size:18px; margin:0 0 4px; }
+  .netlist { margin:10px 0 4px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+  .net { display:flex; align-items:center; gap:10px; width:100%; padding:12px; border:0; border-bottom:1px solid var(--line);
+         background:transparent; color:var(--ink); font-size:16px; text-align:left; cursor:pointer; }
+  .net:last-child { border-bottom:0; }
+  .net.sel { background:var(--ink); color:var(--bg); }
+  .net .name { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .net .tag { font-size:12px; padding:2px 7px; border-radius:99px; border:1px solid currentColor; opacity:.75; }
+  .bars { display:inline-flex; align-items:flex-end; gap:2px; height:14px; }
+  .bars i { width:3px; background:currentColor; opacity:.25; border-radius:1px; }
+  .bars i.on { opacity:1; }
+  .empty { padding:12px; color:var(--mute); font-size:14px; }
+  .field { width:100%; padding:12px; font-size:16px; border-radius:8px; border:1px solid var(--line);
+           background:var(--bg); color:var(--ink); margin-top:4px; }
+  .between { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .between .ghost { flex:0 0 auto; padding:6px 12px; font-size:14px; }
+  .msg { min-height:1.4em; margin:10px 0 0; text-align:center; font-weight:600; }
+  .msg.err { color:var(--red); }
+  .done { padding:12px; border-radius:10px; background:var(--bg); border:1px solid var(--line); margin-top:10px; }
+  .done ol { margin:6px 0 0; padding-left:20px; }
+  #wifiToggle { width:100%; margin-top:4px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Billboard Badge <span>Photo</span></h1>
-  <p class="sub">Take a photo, tune it for black / white / red, send it to the badge.</p>
+  <h1>Billboard Badge <span id="titleTail">Photo</span></h1>
+  <p class="sub" id="subtitle">Take a photo, tune it for black / white / red, send it to the badge.</p>
 
+  <div id="photoUI">
   <div class="card">
     <div class="row">
       <label class="big" for="cam" style="margin:0">Take Photo</label>
@@ -83,6 +105,47 @@
     <input id="pin" class="pin" inputmode="numeric" maxlength="4" autocomplete="off">
     <button id="send" class="big red" style="margin-top:12px">Send to Badge</button>
     <p id="status"></p>
+  </div>
+  <button id="wifiToggle" class="ghost">WiFi settings</button>
+  </div>
+
+  <div id="wifiCard" class="card hidden">
+    <h2 id="wifiTitle">WiFi hotspots</h2>
+    <p class="sub" id="wifiIntro" style="margin-bottom:6px">Hotspots saved here are used the next time the badge connects.</p>
+
+    <div id="wifiForm">
+      <div class="between">
+        <b>Pick your hotspot</b>
+        <button class="ghost" id="rescan">Rescan</button>
+      </div>
+      <div id="nearby" class="netlist"><div class="empty">Looking for networks…</div></div>
+      <button class="ghost" id="otherNet" style="width:100%">Not listed? Type the name</button>
+
+      <div id="netFields" class="hidden">
+        <label>Network name <input id="netName" class="field" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label>Password <input id="netPass" class="field" type="password" autocomplete="off" autocapitalize="off" spellcheck="false"></label>
+        <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="showPass"> Show password</label>
+      </div>
+
+      <label>PIN shown on the badge</label>
+      <input id="wifiPin" class="pin" inputmode="numeric" maxlength="4" autocomplete="off">
+      <button id="saveNet" class="big red" style="margin-top:12px">Save hotspot</button>
+      <p id="wifiMsg" class="msg"></p>
+    </div>
+
+    <div id="wifiDone" class="done hidden">
+      <b>Saved! The badge is joining <span id="doneName"></span>.</b>
+      <ol>
+        <li>Leave the Billboard-Setup network on this phone.</li>
+        <li>Make sure your hotspot is turned on (iPhone: keep the Personal Hotspot screen open).</li>
+        <li>When the badge shows a new QR code, scan it to start sending photos.</li>
+      </ol>
+    </div>
+
+    <div id="savedWrap" class="hidden" style="margin-top:14px">
+      <b>Saved on the badge</b>
+      <div id="savedList" class="netlist"></div>
+    </div>
   </div>
 </main>
 
@@ -218,13 +281,14 @@ function render() {
 // ---- sending ------------------------------------------------------------
 function status(msg, err) { const s = $('status'); s.textContent = msg; s.className = err ? 'err' : ''; }
 
-try { $('pin').value = localStorage.getItem('badgePin') || ''; } catch (e) {}
+try { $('pin').value = $('wifiPin').value = localStorage.getItem('badgePin') || ''; } catch (e) {}
+function rememberPin(pin) { try { localStorage.setItem('badgePin', pin); } catch (e) {} $('pin').value = $('wifiPin').value = pin; }
 
 $('send').onclick = async () => {
   if (!planes) return status('Take a photo first', true);
   const pin = $('pin').value.trim();
   if (!/^\d{4}$/.test(pin)) return status('Enter the 4-digit PIN from the badge', true);
-  try { localStorage.setItem('badgePin', pin); } catch (e) {}
+  rememberPin(pin);
   $('send').disabled = true;
   status('Sending…');
   try {
@@ -238,6 +302,143 @@ $('send').onclick = async () => {
     $('send').disabled = false;
   }
 };
+
+// ---- WiFi settings --------------------------------------------------------
+let wifiMode = 'photo', selected = null;
+
+function bars(rssi) {
+  const n = rssi > -60 ? 4 : rssi > -70 ? 3 : rssi > -80 ? 2 : 1;
+  const b = document.createElement('span'); b.className = 'bars';
+  for (let i = 1; i <= 4; i++) { const e = document.createElement('i'); e.style.height = (i * 3 + 2) + 'px';
+    if (i <= n) e.className = 'on'; b.appendChild(e); }
+  return b;
+}
+
+function wifiMsg(text, err) { const m = $('wifiMsg'); m.textContent = text; m.className = 'msg' + (err ? ' err' : ''); }
+
+function pick(net, row) {
+  selected = net;
+  document.querySelectorAll('#nearby .net').forEach(r => r.classList.toggle('sel', r === row));
+  $('netFields').classList.remove('hidden');
+  $('netName').value = net.ssid;
+  $('netPass').value = '';
+  $('netPass').placeholder = net.lock ? '' : 'Open network: leave blank';
+  $('netPass').focus();
+}
+
+function renderWifi(info) {
+  const list = $('nearby'); list.textContent = '';
+  if (!info.nearby.length) {
+    const e = document.createElement('div'); e.className = 'empty';
+    e.textContent = 'No networks found. Turn your hotspot on (iPhone: Maximize Compatibility), then Rescan.';
+    list.appendChild(e);
+  }
+  for (const net of info.nearby) {
+    const row = document.createElement('button'); row.className = 'net'; row.type = 'button';
+    const name = document.createElement('span'); name.className = 'name'; name.textContent = net.ssid;
+    row.appendChild(name);
+    if (net.saved) { const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'saved'; row.appendChild(t); }
+    if (net.lock) { const l = document.createElement('span'); l.textContent = '🔒'; l.style.fontSize = '13px'; row.appendChild(l); }
+    row.appendChild(bars(net.rssi));
+    row.onclick = () => pick(net, row);
+    if (selected && selected.ssid === net.ssid) row.classList.add('sel');
+    list.appendChild(row);
+  }
+
+  const saved = $('savedList'); saved.textContent = '';
+  $('savedWrap').classList.toggle('hidden', !info.saved.length);
+  for (const ssid of info.saved) {
+    const row = document.createElement('div'); row.className = 'net';
+    const name = document.createElement('span'); name.className = 'name'; name.textContent = ssid;
+    row.appendChild(name);
+    if (info.connected && info.connected === ssid) {
+      const t = document.createElement('span'); t.className = 'tag'; t.textContent = 'in use'; row.appendChild(t);
+    }
+    const rm = document.createElement('button'); rm.className = 'ghost'; rm.textContent = 'Remove';
+    rm.style.padding = '4px 10px'; rm.style.fontSize = '13px';
+    rm.onclick = () => changeWifi({ action: 'remove', ssid });
+    row.appendChild(rm);
+    saved.appendChild(row);
+  }
+  if (info.problem) wifiMsg(info.problem, true);
+}
+
+async function loadWifi(scan) {
+  try {
+    const r = await fetch('/api/wifi' + (scan ? '?scan=1' : ''), { cache: 'no-store' });
+    const info = await r.json();
+    renderWifi(info);
+    return info;
+  } catch (e) {
+    wifiMsg('Lost contact with the badge. Rejoin its network and reload.', true);
+    return null;
+  }
+}
+
+async function changeWifi(body) {
+  const pin = $('wifiPin').value.trim();
+  if (!/^\d{4}$/.test(pin)) { wifiMsg('Enter the 4-digit PIN from the badge', true); return; }
+  rememberPin(pin);
+  $('saveNet').disabled = true;
+  wifiMsg(body.action === 'add' ? 'Saving…' : 'Removing…');
+  try {
+    const r = await fetch('/api/wifi', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                         body: JSON.stringify(Object.assign({ pin }, body)) });
+    const res = await r.json();
+    if (res.switching) {
+      $('doneName').textContent = body.ssid;
+      $('wifiForm').classList.add('hidden');
+      $('savedWrap').classList.add('hidden');
+      $('wifiDone').classList.remove('hidden');
+      return;
+    }
+    wifiMsg(res.message, !res.ok);
+    if (res.ok) { $('netPass').value = ''; await loadWifi(false); }
+  } catch (e) {
+    wifiMsg('Could not reach the badge', true);
+  } finally {
+    $('saveNet').disabled = false;
+  }
+}
+
+$('saveNet').onclick = () => {
+  const ssid = $('netName').value.trim();
+  if (!ssid) { wifiMsg('Tap your hotspot in the list first', true); return; }
+  const password = $('netPass').value;
+  if (password && password.length < 8) { wifiMsg('WiFi passwords are at least 8 characters', true); return; }
+  changeWifi({ action: 'add', ssid, password });
+};
+$('otherNet').onclick = () => {
+  selected = null;
+  document.querySelectorAll('#nearby .net').forEach(r => r.classList.remove('sel'));
+  $('netFields').classList.remove('hidden'); $('netName').value = ''; $('netName').focus();
+};
+$('showPass').onchange = () => { $('netPass').type = $('showPass').checked ? 'text' : 'password'; };
+$('rescan').onclick = async () => {
+  $('rescan').disabled = true;
+  wifiMsg(wifiMode === 'setup' ? 'Scanning… (this phone may disconnect for a moment)' : 'Scanning…');
+  await loadWifi(true);
+  wifiMsg('');
+  $('rescan').disabled = false;
+};
+$('wifiToggle').onclick = () => {
+  const card = $('wifiCard'), open = card.classList.toggle('hidden') === false;
+  $('wifiToggle').textContent = open ? 'Hide WiFi settings' : 'WiFi settings';
+  if (open) { loadWifi(false); card.scrollIntoView({ behavior: 'smooth' }); }
+};
+
+(async () => {
+  const info = await loadWifi(false);
+  if (info && info.mode === 'setup') {
+    wifiMode = 'setup';
+    $('photoUI').classList.add('hidden');
+    $('wifiCard').classList.remove('hidden');
+    $('titleTail').textContent = 'Setup';
+    $('subtitle').textContent = 'Connect your badge to your phone\'s hotspot. You only do this once per hotspot.';
+    $('wifiTitle').textContent = 'Choose your hotspot';
+    $('wifiIntro').textContent = 'The badge only sees 2.4 GHz networks. iPhone: turn on Maximize Compatibility.';
+  }
+})();
 </script>
 </body>
 </html>
