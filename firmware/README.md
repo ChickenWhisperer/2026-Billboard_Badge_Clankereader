@@ -77,3 +77,19 @@ Unknown or previously colored panel content receives a full white cleanup first.
 
 Custom waveform waits are bounded and check both display controllers. Updates
 queued during a refresh coalesce into the latest requested image and mode.
+
+
+## Optional smooth text
+
+Set `"smooth_text": true` in `/data/panel_config.json` to enable gray
+antialiasing in the schedule apps on B1 panels.
+
+The 14px softer-edge and 16px hinted Montserrat fonts load only when requested.
+Missing fonts fall back to the built-ins. Other apps can use
+`lib.smooth_text.load_font(filename, fallback)`. It keeps font storage alive,
+prefers the native loader, and supports the portable `lib.binfont` loader.
+To render gray edges, use the display render and update APIs described above.
+For scenes containing red, select mixed mode.
+
+See `badge/data/fonts/README.txt` for the font license, pinned build tools, and
+reproduction commands. The generator verifies the expected output hashes.
