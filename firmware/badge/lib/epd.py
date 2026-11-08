@@ -318,7 +318,12 @@ class EPaperDisplay:
                 self.black.pixel((col + img_c), (row + img_r), int(black))
                 self.red.pixel((col + img_c), (row + img_r), int(red))
 
-    def draw_png(self, filename: str, row: int = 0, col: int = 0, grayscale: bool = False, mixed: bool = False):
+    """
+    Draw a PNG
+    
+    If drawing a PNG from a byte array, pass None to `filename` and pass the byte array in `data`
+    """
+    def draw_png(self, filename: str = None, row: int = 0, col: int = 0, grayscale: bool = False, mixed: bool = False, data: bytes = None):
         """Draw a PNG; use the same grayscale/mixed mode in update()."""
         self._check_modes(grayscale, mixed)
         gc.collect()
@@ -326,7 +331,7 @@ class EPaperDisplay:
         leds[0] = (0, 0, 50) if self._png_blink else (0, 0, 10)
         leds.write()
         print(f"Loading {filename} This will take a while... {time.time()}")
-        show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col, grayscale, mixed)
+        show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col, grayscale, mixed, data)
         leds[0] = (0, 0, 0)
         leds.write()
         print("Done loading png")

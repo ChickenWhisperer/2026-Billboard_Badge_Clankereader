@@ -13,10 +13,14 @@ RED = const(2)
 GRAY = const(3)
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
-
-def show_png(path, black_framebuffer: bytearray, red_framebuffer: bytearray, row: int = 0, col: int = 0, grayscale: bool = False, mixed: bool = False):
+"""
+Draw a PNG either from a `path` or a byte array in `data`
+"""
+def show_png(path: str | None, black_framebuffer: bytearray, red_framebuffer: bytearray, row: int = 0, col: int = 0, grayscale: bool = False, mixed: bool = False, data: bytes = None):
     """Draw a PNG; mixed keeps red and marks gray in both software planes."""
-    image_width, image_height, kinds, rows, bit_depth = _read_palette_png(path, grayscale, mixed)
+    image_width, image_height, kinds, rows, bit_depth = _read_palette_png(
+        path, data, grayscale, mixed
+    )
 
     for y, line in enumerate(rows):
         screen_y = row + y
@@ -119,13 +123,20 @@ def _undo_filter(filter_type: int, row, previous):
         data[i] = (data[i] + extra) & 255
 
 
-def _read_palette_png(path, grayscale=False, mixed=False):
+def _read_palette_png(
+    path: str = None, data: bytes = None, grayscale=False, mixed=False
+):
     if grayscale and mixed:
         raise ValueError("Choose grayscale or mixed mode")
     if grayscale or mixed:
         from lib.epd_grayscale import grayscale_kind, mixed_kind
-    with open(path, "rb") as image_file:
-        data = image_file.read()
+    if path:
+        with open(path, "rb") as image_file:
+            data = image_file.read()
+    elif data:
+        pass
+    else:
+        raise ValueError("missing one of: path, data")
     if data[:8] != _PNG_SIGNATURE:
         raise ValueError("not a png: " + path)
 
