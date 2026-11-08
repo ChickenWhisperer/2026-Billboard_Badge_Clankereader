@@ -176,6 +176,14 @@ class EPaperDisplay:
 
         # The framebuffers are set and display should be updated.
         self._framebuffer_ready = aio.Event()
+        # Panel capability stays stable while the worker sends prepared frames.
+        self._supports_grayscale = self._reverse_fb_bits
+        self._requested_grayscale = False
+        self._requested_mixed = False
+        self._render_grayscale = False
+        self._render_mixed = False
+        # E-paper keeps its image across reboot; its initial pigments are unknown.
+        self._panel_monochrome = False
         self._png_blink = False
         self._refreshing_hw = False
 
@@ -233,7 +241,12 @@ class EPaperDisplay:
         except AttributeError:
             stride = w * 2
         src = color_p.__dereference__(stride * h)
-        _viper_lv_flush(
+        convert = _viper_lv_flush
+        if (self._render_grayscale or self._render_mixed) and self.supports_grayscale:
+            from lib import epd_grayscale
+            convert = (epd_grayscale.rgb565_to_mixed if self._render_mixed
+                       else epd_grayscale.rgb565_to_grayscale)
+        convert(
             src,
             self._framebuffer_black,
             self._framebuffer_red,
@@ -247,8 +260,43 @@ class EPaperDisplay:
         leds.write()
         disp.flush_ready()
 
-    def update(self):
-        """Done updating the framebuffer, update the display with the contents"""
+    @property
+    def supports_grayscale(self):
+        return self._supports_grayscale
+
+    def _check_modes(self, grayscale, mixed):
+        if grayscale and mixed:
+            raise ValueError("Choose grayscale or mixed mode")
+        if (grayscale or mixed) and not self.supports_grayscale:
+            raise ValueError("Grayscale refresh requires a B1 panel")
+
+    def refresh_lvgl(self, grayscale=False, mixed=False):
+        """Render LVGL into the framebuffers; use the same mode in update().
+
+        Default rendering keeps the original B/W/red thresholds. Grayscale
+        produces B/W/gray; mixed preserves red and adds gray as a fourth color.
+        """
+        self._check_modes(grayscale, mixed)
+        previous_grayscale = self._render_grayscale
+        previous_mixed = self._render_mixed
+        try:
+            self._render_grayscale = grayscale
+            self._render_mixed = mixed
+            lvgl.refr_now(self.lv_display)
+        finally:
+            self._render_grayscale = previous_grayscale
+            self._render_mixed = previous_mixed
+
+    def update(self, grayscale=False, mixed=False):
+        """Queue the latest frame; gray waveforms are opt-in and require B1.
+
+        grayscale=True uses 00 white, 01 black, 10 gray (no red).
+        mixed=True uses 00 white, 01 black, 10 red, 11 gray in software.
+        Match the mode used by refresh_lvgl()/draw_png().
+        """
+        self._check_modes(grayscale, mixed)
+        self._requested_grayscale = grayscale
+        self._requested_mixed = mixed
         self._display_updated.clear()
         self._framebuffer_ready.set()
 
@@ -270,8 +318,9 @@ class EPaperDisplay:
                 self.black.pixel((col + img_c), (row + img_r), int(black))
                 self.red.pixel((col + img_c), (row + img_r), int(red))
 
-    def draw_png(self, input: str | bytes, row: int = 0, col: int = 0):
-
+    def draw_png(self, input: str | bytes, row: int = 0, col: int = 0, grayscale: bool = False, mixed: bool = False):
+        """Draw a PNG; use the same grayscale/mixed mode in update()."""
+        self._check_modes(grayscale, mixed)
         gc.collect()
         self._png_blink = not self._png_blink
         leds[0] = (0, 0, 50) if self._png_blink else (0, 0, 10)
@@ -279,11 +328,11 @@ class EPaperDisplay:
         if isinstance(input, str):
             filename = input
             print(f"Loading {filename} This will take a while... {time.time()}")
-            show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col)
+            show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col, grayscale, mixed)
         elif isinstance(input, bytes):
             data = input
             print(f"Loading data; This will take a while... {time.time()}")
-            show_png(data, self._framebuffer_black, self._framebuffer_red, row, col)
+            show_png(data, self._framebuffer_black, self._framebuffer_red, row, col, grayscale, mixed)
         leds[0] = (0, 0, 0)
         leds.write()
         print("Done loading png")
@@ -304,9 +353,13 @@ class EPaperDisplay:
         red_right = bytearray(half_frame_one_color_size)
         while True:
             if self._framebuffer_ready.is_set():
+                # Clear before awaiting hardware so a later request is retained.
+                self._framebuffer_ready.clear()
+                grayscale = self._requested_grayscale
+                mixed = self._requested_mixed
                 self._display_updated.clear()
                 t0 = time.ticks_ms()
-                if self._reverse_fb_bits:
+                if self._reverse_fb_bits and not (grayscale or mixed):
                     _fast_split_and_reverse(
                         self._framebuffer_black, black_left, black_right, _REVERSE_LUT
                     )
@@ -327,11 +380,19 @@ class EPaperDisplay:
                 _blink_task = aio.create_task(self._blink_red_while_refreshing())
 
                 old_rev = self._reverse_fb_bits
-                self._reverse_fb_bits = False
+                # Gray helpers consume logical-order planes and reverse on send.
+                if not (grayscale or mixed):
+                    self._reverse_fb_bits = False
                 try:
-                    await self.global_update(
-                        black_left, red_left, black_right, red_right
-                    )
+                    if mixed:
+                        from lib.epd_grayscale import mixed_update
+                        await mixed_update(self, black_left, red_left, black_right, red_right)
+                    else:
+                        await self.global_update(
+                            black_left, red_left, black_right, red_right, grayscale=grayscale)
+                except BaseException:
+                    self._panel_monochrome = False
+                    raise
                 finally:
                     self._reverse_fb_bits = old_rev
                     self._refreshing_hw = False
@@ -342,9 +403,9 @@ class EPaperDisplay:
                 await aio.sleep_ms(400)
                 leds.clear()
 
-                self._framebuffer_ready.clear()
                 gc.collect()
-                self._display_updated.set()
+                if not self._framebuffer_ready.is_set():
+                    self._display_updated.set()
             await aio.sleep_ms(50)
 
     async def global_update(
@@ -353,7 +414,16 @@ class EPaperDisplay:
         red_left: bytearray | bytes | memoryview[int],
         black_right: bytearray | bytes | memoryview[int],
         red_right: bytearray | bytes | memoryview[int],
+        grayscale=False,
     ):
+        if grayscale:
+            self._check_modes(True, False)
+            from lib.epd_grayscale import grayscale_update
+            await grayscale_update(self, black_left, red_left, black_right, red_right)
+            return
+        # Keep the ordinary three-color sequence and overlapping-plane behavior.
+        has_red = any(red_left) or any(red_right)
+        self._panel_monochrome = False
         print("Updating display to new image")
         await self._reset()
         tick = time.ticks_ms()
@@ -370,6 +440,7 @@ class EPaperDisplay:
         print("Done updating display")
         tock = time.ticks_ms()
         print(tock - tick)
+        self._panel_monochrome = not has_red
 
     async def cog_initial(self):
         self._send_index_data(0x05, [0x7D])
