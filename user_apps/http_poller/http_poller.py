@@ -9,10 +9,13 @@ import network
 import time
 from lib.json_configs import load
 import requests
-import gc
+import asyncio as aio
+import sys
 
 WLAN_CREDENTIALS_FILE = "data/wlan_credentials.json"
 IMAGE_URL = "https://thzinc.com/assets/2026-temporary-supercon-assets/test.png"
+UPDATE_INTERVAL_SECONDS = 300
+RETRY_INTERVAL_SECONDS = 5
 
 
 def await_pressed_buttons():
@@ -35,10 +38,10 @@ class HTTPPollerApp(BaseApp):
         self.launched = False
 
         # Time between updates
-        self.update_interval_seconds = 300
+        self.update_interval_seconds = UPDATE_INTERVAL_SECONDS
 
         # Time to wait after a failed update
-        self.retry_interval_seconds = 5
+        self.retry_interval_seconds = RETRY_INTERVAL_SECONDS
 
         # Time at (or after) which to update
         self.next_update_time = 0
@@ -51,7 +54,7 @@ class HTTPPollerApp(BaseApp):
         # Variable to hold the last downloaded image
         self.image_data: bytes = None
 
-    def fetch_image(self):
+    async def fetch_image(self):
         for attempt in range(20):
             print("attempt %d: connecting to network" % (attempt))
             self.nic.active(True)
@@ -64,21 +67,28 @@ class HTTPPollerApp(BaseApp):
                     for _ in range(20):
                         if self.nic.isconnected():
                             break
-                        time.sleep(0.250)
-                except:
-                    print("failed connecting to ssid %s" % (ssid, key))
+                        await aio.sleep(0.250)
+                except Exception as ex:
+                    print("failed connecting to ssid %s" % (ssid))
+                    sys.print_exception(ex)
 
             if not self.nic.isconnected():
+                self.nic.active(False)
                 print("failed to connect to any configured SSID")
                 return False
 
             print("requesting %s" % (IMAGE_URL))
             response = requests.get(IMAGE_URL)
-            print("got HTTP %d; headers %s" % (response.status_code, response.headers))
 
             if not (response.status_code >= 200 and response.status_code <= 299):
+                self.nic.active(False)
+                print(
+                    "failed to get successful response; HTTP status code %d; headers %s"
+                    % (response.status_code, response.headers)
+                )
                 return False
 
+            print("reading response content")
             self.image_data = response.content
             self.image_ready = True
 
@@ -90,10 +100,20 @@ class HTTPPollerApp(BaseApp):
         if self.image_ready:
             print("drawing image")
             display.clear()
-            display.draw_png(self.image_data)
+            display.draw_png(data=self.image_data)
             display.update()
             self.image_ready = False
             self.image_data = None
+
+    async def attempt_fetch_image(self):
+        if await self.fetch_image():
+            self.next_update_time = time.time() + self.update_interval_seconds
+        else:
+            print(
+                "update failed; waiting %d seconds before retry"
+                % (self.retry_interval_seconds)
+            )
+            self.next_update_time = time.time() + self.retry_interval_seconds
 
     def run(self):
         """Add your app behavior here. Will be run in a while True loop."""
@@ -103,13 +123,6 @@ class HTTPPollerApp(BaseApp):
             if self.image_ready:
                 self.display_image()
             elif time.time() > self.next_update_time:
-                if self.fetch_image():
-                    self.next_update_time = time.time() + self.update_interval_seconds
-                else:
-                    print(
-                        "update failed; waiting %d seconds before retry"
-                        % (self.retry_interval_seconds)
-                    )
-                    self.next_update_time = time.time() + self.retry_interval_seconds
+                aio.create_task(self.attempt_fetch_image())
             else:
                 await_pressed_buttons()
