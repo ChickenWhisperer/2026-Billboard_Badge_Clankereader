@@ -4,6 +4,7 @@ import lvgl
 from apps.base_app import BaseApp
 from lib.epd import display, display_height, display_width
 from lib.led_bar import leds
+from lib import smooth_text
 
 # Schedule ink. Swap these two to invert the page.
 _BG = lvgl.color_hex(0xFFFFFF)
@@ -23,6 +24,16 @@ _FONTS = {
     "speaker": (_SPEAKER_FONT, _SPEAKER_H),
     "title": (_FONT, _TITLE_H),
 }
+
+def _schedule_fonts(enabled):
+    if not enabled:
+        return _FONTS
+    return {
+        "title": (smooth_text.load_font("montserrat-14-soft.bin", _FONT), _TITLE_H),
+        "speaker": (smooth_text.load_font("montserrat-16-strong.bin", _SPEAKER_FONT), _SPEAKER_H),
+        "time": (_TIME_FONT, _TIME_H),
+    }
+
 _SCHEDULE = "/data/schedule.csv"
 _TALK_STAGES = ("Lamarr", "Hopper")
 _WORKSHOP_ROOMS = ("HQ 2nd Floor", "Room A", "Room B")
@@ -374,7 +385,7 @@ def _add_line(parent, x, y, width, text, role="title"):
     label.set_style_text_color(_FG, 0)
     label.set_style_bg_opa(lvgl.OPA.TRANSP, 0)
     label.set_text(text)
-    return y + line_h
+    return label
 
 class ScheduleApp(BaseApp):
     """Schedule table for the day named by the `day` class attribute."""
@@ -403,17 +414,28 @@ class ScheduleApp(BaseApp):
         talks = self._load()
         if not self._built:
             self._build(talks)
+        enabled = smooth_text.enabled(display)
+        fonts = _schedule_fonts(enabled)
+        for label, role in self._labels:
+            label.set_style_text_font(fonts[role][0], 0)
         display.clear()
         lvgl.screen_load(self._scr)
         self._scr.update_layout()
         # One refresh of the opaque screen. Invalidating every label overflows
         # LVGL's area list and the transparent fallback flushes as solid black.
-        lvgl.refr_now(display.lv_display)
+        self._scr.invalidate()
+        if enabled:
+            display.refresh_lvgl(grayscale=True)
+        else:
+            display.refresh_lvgl()
         # The lower picture first. A taller picture above keeps the ink that
         # hangs into the next band.
         for path, col, row, _img_w, _img_h in sorted(self._images, key=lambda item: -item[2]):
             display.draw_png(path, row, col)
-        display.update()
+        if enabled:
+            display.update(grayscale=True)
+        else:
+            display.update()
         leds.fill((0,1,0))
 
     def _build(self, talks):
@@ -424,11 +446,14 @@ class ScheduleApp(BaseApp):
         scr.set_style_bg_color(_BG, 0)
         scr.set_style_bg_opa(lvgl.OPA.COVER, 0)
 
+        self._labels = []
         if not talks:
-            _add_line(scr, PAD, PAD, display_width - 2 * PAD, f"No talks for {self.day}")
+            label = _add_line(scr, PAD, PAD, display_width - 2 * PAD, f"No talks for {self.day}")
+            self._labels.append((label, "title"))
 
         for x, y, width, text, role in placed["lines"]:
-            _add_line(scr, x, y, width, text, role)
+            label = _add_line(scr, x, y, width, text, role)
+            self._labels.append((label, role))
         self._images = placed["images"]
         self._scr = scr
         self._built = True
