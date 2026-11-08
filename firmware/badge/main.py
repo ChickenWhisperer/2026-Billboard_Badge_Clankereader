@@ -55,6 +55,13 @@ async def main():
         display.update()
         leds.fill((0,1,0))
 
+    try:  # opt-in BLE presence advert; off (and BLE untouched) unless enabled
+        from lib import presence
+        presence.start()
+        aio.create_task(presence.keep_alive())
+    except Exception as ex:
+        print("presence:", ex)
+
     print("Initializing main...")
 
     _button_task = aio.create_task(button_scan())
