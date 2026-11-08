@@ -8,6 +8,7 @@ work (crop, resize, dither) happens in the phone's browser, so the badge just
 copies the finished frame straight into its framebuffers.
 
 by Travis Foss
+
 Vibe Coded with Claude
 
 ## Where each file goes
