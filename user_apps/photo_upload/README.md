@@ -2,10 +2,13 @@
 
 Take a picture with your phone and put it on the badge's e-paper display over WiFi.
 
-The badge joins your phone's hotspot and serves a small web page. Open it on the
-phone, snap a photo, tune it for black / white / red, and send it. All the image
-work (crop, resize, dither) happens in the phone's browser, so the badge just
-copies the finished frame straight into its framebuffers.
+The badge joins your phone's hotspot and shows a QR code. Scan it, snap a photo,
+tune it for black / white / red, and send it. All the image work (crop, resize,
+dither) happens in the phone's browser, so the badge just copies the finished
+frame straight into its framebuffers.
+
+No config files to edit: the first time you open the app, it walks you through
+connecting to your hotspot from your phone.
 
 by Travis Foss
 
@@ -17,11 +20,10 @@ Vibe Coded with Claude
 | --- | --- | --- |
 | `photo_upload.py` | `/apps/` | The app itself. It shows up in the badge menu as "Photo Upload". |
 | `photo_upload.html` | `/data/` | The web page the badge serves to your phone. |
-| `wifi.json` | `/data/` | Your hotspot name and password. Make it from `wifi.example.json` (step 1 below). |
 
-Both data files go directly in `/data/`, next to the `graphics` and `gallery`
-folders, not inside them. The app makes `/data/uploads/` by itself the first time
-you send a photo, so you don't create that folder.
+`photo_upload.html` goes directly in `/data/`, next to the `graphics` and
+`gallery` folders, not inside them. The app creates `/data/wifi.json` (your saved
+hotspots) and `/data/uploads/` (your photos) by itself.
 
 ```
 /
@@ -29,93 +31,130 @@ you send a photo, so you don't create that folder.
 │   └── photo_upload.py
 └── data/
     ├── photo_upload.html
-    ├── wifi.json
     ├── graphics/        (leave as is)
     └── gallery/         (leave as is)
 ```
 
 ## Install with Thonny
 
-1. **Make your WiFi file.** On your computer, make a copy of `wifi.example.json`,
-   rename the copy to `wifi.json`, and open it in a text editor. Replace the
-   placeholders with your hotspot's exact name and password, keeping the quotes:
-
-   ```json
-   {"ssid": "WifiName", "password": "yourpassword"}
-   ```
-
-   The name and password are case-sensitive. See the iPhone tips below if your
-   hotspot name has an apostrophe in it.
-
-2. **Connect Thonny to the badge.** Plug the badge into your computer over USB and
+1. **Connect Thonny to the badge.** Plug the badge into your computer over USB and
    open Thonny. Go to **Tools → Options → Interpreter**, choose **MicroPython
    (ESP32)**, pick the badge's port, and click **OK**. If the shell doesn't show a
    `>>>` prompt, click the red **Stop** button to interrupt the running firmware.
 
-3. **Show the file browser.** Go to **View → Files**. The top pane is **This
+2. **Show the file browser.** Go to **View → Files**. The top pane is **This
    computer**, the bottom pane is **MicroPython device** (the badge).
 
-4. **Upload the app.** In the bottom (badge) pane, double-click the `apps` folder to
+3. **Upload the app.** In the bottom (badge) pane, double-click the `apps` folder to
    open it. In the top (computer) pane, find `photo_upload.py`, right-click it, and
    choose **Upload to /apps**.
 
-5. **Upload the two data files.** In the badge pane, go back up a level and
-   double-click the `data` folder. In the computer pane, right-click
-   `photo_upload.html` and choose **Upload to /data**, then do the same for
-   `wifi.json`. Don't go into `graphics` or `gallery` first.
+4. **Upload the web page.** In the badge pane, go back up a level and double-click
+   the `data` folder. In the computer pane, right-click `photo_upload.html` and
+   choose **Upload to /data**. Don't go into `graphics` or `gallery` first.
 
-6. **Check it.** The badge pane should now show `photo_upload.html` and `wifi.json`
-   inside `data`, and `photo_upload.py` inside `apps`.
-
-7. **Restart the badge.** Press **Ctrl+D** in Thonny's shell for a soft reboot, or
+5. **Restart the badge.** Press **Ctrl+D** in Thonny's shell for a soft reboot, or
    unplug the badge and plug it back in. Photo Upload now appears in the menu.
 
-To change your hotspot later, edit `wifi.json` on your computer and upload it to
-`/data` again (Thonny asks before overwriting), or double-click `wifi.json` in the
-badge pane to edit it in place and save with **Ctrl+S**.
+## First time: connect to your hotspot
 
-## Use
+1. Open **Photo Upload** on the badge. With no hotspot saved yet, it shows
+   **WIFI SETUP**, a QR code, and a 4-digit PIN.
+2. Scan the QR code with your phone's camera and join the network it offers
+   (`Billboard-Setup-xxxx`, unique to your badge). The setup page should open by
+   itself. If it doesn't, open the address shown on the badge (`http://192.168.4.1`).
+3. Tap your hotspot in the list, type its password, enter the PIN, and tap
+   **Save hotspot**.
+4. Leave the setup network on your phone and make sure your hotspot is on. The
+   badge joins it (LEDs run a blue chase) and shows the photo QR code.
+
+You can save several hotspots, say yours and a friend's. The badge uses whichever
+saved one is on, preferring the most recently added. To add or remove hotspots
+later, open **WiFi settings** at the bottom of the photo page, or press **User B**
+on the badge's WiFi problem screen to go back into setup.
+
+## Sending photos
 
 1. Turn on your phone's hotspot, then launch **Photo Upload** on the badge.
-   The LEDs run a blue chase while it connects.
-2. The badge shows an address (and `http://billboard.local`) plus a 4-digit PIN.
-3. Open the address in your phone's browser and tap **Take Photo** or **From library**.
-4. Adjust the image. The preview shows exactly what the badge will display:
+2. Scan the QR code on the badge (or open the address under it).
+3. Tap **Take Photo** or **From library**, then adjust the image. The preview
+   shows exactly what the badge will display:
    - **Fill / Fit / Rotate**: crop to fill the panel, or show the whole photo
    - **Brightness / Contrast**: photos usually look best with contrast up
    - **Red**: how red something must be to print in red ink (0 = no red)
    - **Smooth / Pattern / Posterize**: how shading turns into dots
-5. Enter the PIN and tap **Send to Badge**. The panel redraws in about 20 s.
+4. Enter the PIN shown on the badge and tap **Send to Badge**. The panel redraws
+   in about 20 s.
 
-On the badge, **User A** steps through saved uploads (the last 12 are kept in
-`/data/uploads/`) and **User B** shows the address and PIN again.
+## Buttons
+
+| Screen | User A | User B |
+| --- | --- | --- |
+| Photo QR code / a photo | Next saved photo (last 12 kept) | Back to the QR code screen |
+| WiFi problem | Try again | WiFi setup |
+| WiFi setup | Leave setup, try saved hotspots | |
 
 ## Safety
 
-- Uploads need the PIN shown on the badge, which changes on every boot.
-- Uploads are only accepted while Photo Upload is on screen, so nobody can
-  paint over another app.
-- Your hotspot password stays in `/data/wifi.json` on the badge. Don't commit it.
+- Sending photos and changing hotspots both need the PIN shown on the badge,
+  which changes on every boot.
+- Photos are only accepted while Photo Upload is on screen, so nobody can paint
+  over another app.
+- Hotspot passwords are stored on the badge in `/data/wifi.json` and are never
+  sent back to the phone page. Don't commit that file anywhere.
+- The setup network is open (so your phone can join it without a password) and
+  only runs while the setup screen is up.
 
-## iPhone hotspot tips
+## If it won't connect
 
-The ESP32-S3 only does 2.4 GHz WiFi, and iPhone hotspots have a few quirks:
+The badge only does 2.4 GHz WiFi. When it can't join, the screen says why and
+lists the networks it *can* see.
 
-- Turn on **Settings → Personal Hotspot → Maximize Compatibility**, or the badge
-  can't see the hotspot at all.
+| The badge says | What to do |
+| --- | --- |
+| Can't see 'name' | The hotspot isn't visible to the badge. See the phone tips below. |
+| Wrong password | Press **User B** for WiFi setup and save the hotspot again with the right password. |
+| ...is WPA3-only | Set the hotspot's security to WPA2 or WPA2/WPA3. |
+| Timed out | Usually the password, or the phone stopped the hotspot. Press **User A** to retry. |
+
+Picking your hotspot from the list in setup avoids typos in the name. If you
+type it by hand, the app ignores capital letters and curly vs straight
+apostrophes. If WiFi drops later, the badge rejoins by itself.
+
+**iPhone**
+
+- Turn on **Settings → Personal Hotspot → Maximize Compatibility**. Without it,
+  newer iPhones use 5 GHz and the badge can't see the hotspot at all.
 - Keep the Personal Hotspot screen open while the badge connects. iPhones stop
   advertising the hotspot when nothing is connected.
-- Hotspot names like "Travis's iPhone" use a curly apostrophe (’). Rename the
-  phone without one (Settings → General → About → Name) and use that in `wifi.json`.
-- `billboard.local` may not resolve on Android. Use the number address instead.
+- The hotspot name is the phone's name (Settings → General → About → Name). If
+  two phones nearby share a name, iOS may add " 2" to one of them.
+- During setup, your iPhone can't run its hotspot and join the badge's setup
+  network at the same time. That's expected: save the hotspot, leave the setup
+  network, and the hotspot comes back.
 
-If it won't connect, open Photo Upload again to retry, or run this in the REPL to
-see which networks the badge can find:
+**Android**
 
-```python
-import network
-w = network.WLAN(network.STA_IF); w.active(True)
-for n in w.scan(): print(n[0], 'channel', n[2], 'signal', n[3])
+- In the hotspot settings, set the band to **2.4 GHz** (sometimes called
+  "Extend compatibility" or "Wi-Fi 4"), and security to **WPA2** or **WPA2/WPA3**.
+- If the setup page doesn't pop up, tap the "Sign in to network" notification or
+  open `http://192.168.4.1`.
+
+## Setting up by hand (optional)
+
+You can skip the phone setup by creating `/data/wifi.json` yourself. Copy
+`wifi.example.json`, fill in your hotspot, rename it to `wifi.json`, and upload it
+to `/data`:
+
+```json
+{"ssid": "WifiName", "password": "yourpassword"}
+```
+
+Several hotspots look like this:
+
+```json
+{"networks": [{"ssid": "WifiName", "password": "yourpassword"},
+              {"ssid": "Friend's Phone", "password": "theirpassword"}]}
 ```
 
 ## Known issue
@@ -131,3 +170,8 @@ red), 960 × 672, 120 bytes per row, most significant bit = leftmost pixel, set
 bit = ink. That's 161,280 bytes, POSTed to `/upload` with the PIN in an `X-Pin`
 header. The server is a minimal `asyncio` HTTP server, so buttons and LEDs keep
 working while it runs.
+
+In setup mode the badge runs an open access point plus a tiny DNS server that
+answers every lookup with its own address, which makes phones open the setup
+page automatically. The QR codes are generated on the badge by a small built-in
+encoder (byte mode, error correction L).
