@@ -115,11 +115,17 @@ def _undo_filter(filter_type: int, row, previous):
         data[i] = (data[i] + extra) & 255
 
 
-def _read_palette_png(path):
-    with open(path, "rb") as image_file:
-        data = image_file.read()
-    if data[:8] != _PNG_SIGNATURE:
-        raise ValueError("not a png: " + path)
+def _read_palette_png(input):
+    if isinstance(input, str):
+        path = input
+        with open(path, "rb") as image_file:
+            data = image_file.read()
+        if data[:8] != _PNG_SIGNATURE:
+            raise ValueError("not a png: " + path)
+    elif isinstance(input, bytes):
+        data = input
+    else:
+        raise ValueError("input was neither a path string nor bytes")
 
     palette = None
     compressed = bytearray()

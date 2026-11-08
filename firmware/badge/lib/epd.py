@@ -270,13 +270,20 @@ class EPaperDisplay:
                 self.black.pixel((col + img_c), (row + img_r), int(black))
                 self.red.pixel((col + img_c), (row + img_r), int(red))
 
-    def draw_png(self, filename: str, row: int = 0, col: int = 0):
+    def draw_png(self, input: str | bytes, row: int = 0, col: int = 0):
+
         gc.collect()
         self._png_blink = not self._png_blink
         leds[0] = (0, 0, 50) if self._png_blink else (0, 0, 10)
         leds.write()
-        print(f"Loading {filename} This will take a while... {time.time()}")
-        show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col)
+        if isinstance(input, str):
+            filename = input
+            print(f"Loading {filename} This will take a while... {time.time()}")
+            show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col)
+        elif isinstance(input, bytes):
+            data = input
+            print(f"Loading data; This will take a while... {time.time()}")
+            show_png(data, self._framebuffer_black, self._framebuffer_red, row, col)
         leds[0] = (0, 0, 0)
         leds.write()
         print("Done loading png")
