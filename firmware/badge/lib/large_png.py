@@ -10,12 +10,13 @@ SCREEN_HEIGHT = const(672)
 WHITE = const(0)
 BLACK = const(1)
 RED = const(2)
+GRAY = const(3)
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 
 
-def show_png(path, black_framebuffer: bytearray, red_framebuffer: bytearray, row: int = 0, col: int = 0):
-    """Draw a palette or grayscale PNG at screen column `col` and row `row`."""
-    image_width, image_height, kinds, rows, bit_depth = _read_palette_png(path)
+def show_png(path, black_framebuffer: bytearray, red_framebuffer: bytearray, row: int = 0, col: int = 0, grayscale: bool = False, mixed: bool = False):
+    """Draw a PNG; mixed keeps red and marks gray in both software planes."""
+    image_width, image_height, kinds, rows, bit_depth = _read_palette_png(path, grayscale, mixed)
 
     for y, line in enumerate(rows):
         screen_y = row + y
@@ -52,7 +53,10 @@ def _blit_span(line, kinds, bit_depth: int, start: int, end: int, col: int, scre
         byte_index = i >> 3
         bit = 128 >> (i & 7)
         cleared = 255 ^ bit
-        if pixel == RED:
+        if pixel == GRAY:
+            black_buf[byte_index] = black_buf[byte_index] | bit
+            red_buf[byte_index] = red_buf[byte_index] | bit
+        elif pixel == RED:
             red_buf[byte_index] = red_buf[byte_index] | bit
             black_buf[byte_index] = black_buf[byte_index] & cleared
         elif pixel == BLACK:
@@ -115,7 +119,11 @@ def _undo_filter(filter_type: int, row, previous):
         data[i] = (data[i] + extra) & 255
 
 
-def _read_palette_png(path):
+def _read_palette_png(path, grayscale=False, mixed=False):
+    if grayscale and mixed:
+        raise ValueError("Choose grayscale or mixed mode")
+    if grayscale or mixed:
+        from lib.epd_grayscale import grayscale_kind, mixed_kind
     with open(path, "rb") as image_file:
         data = image_file.read()
     if data[:8] != _PNG_SIGNATURE:
@@ -149,16 +157,26 @@ def _read_palette_png(path):
     if interlaced:
         raise ValueError("turn off interlacing when saving the png")
     if color_type == 0 and bit_depth in (1, 2, 4, 8):
-        # No PLTE. Sample 0 sets the black plane; any other sample clears it.
         kinds = bytearray(1 << bit_depth)
-        kinds[0] = BLACK
+        if grayscale or mixed:
+            maximum = (1 << bit_depth) - 1
+            for sample in range(len(kinds)):
+                kind = grayscale_kind(sample * 255 // maximum)
+                kinds[sample] = GRAY if mixed and kind == RED else kind
+        else:
+            # Preserve the original B/W mapping: only sample 0 is black.
+            kinds[0] = BLACK
     elif color_type != 3 or palette is None:
         raise ValueError("save the png as a palette image")
     else:
         count = 1 << bit_depth if bit_depth in (1, 2, 4, 8) else len(palette)
         kinds = bytearray(count)
         for index, color in enumerate(palette):
-            kinds[index] = _color_kind(color[0], color[1], color[2])
+            if mixed:
+                kinds[index] = mixed_kind(color[0], color[1], color[2])
+            else:
+                kinds[index] = (grayscale_kind(color[1]) if grayscale
+                                else _color_kind(color[0], color[1], color[2]))
 
     data = None
     gc.collect()
