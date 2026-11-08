@@ -207,6 +207,9 @@ class EPaperDisplay:
         # Is the display done updating? Start set since the display is not updating before boot.
         self._display_updated = aio.Event()
         self._display_updated.set()
+        # Held while something drives the panel: run() below, or an opt-in driver
+        # of its own such as lib/epd_partial.py. Keeps the two from overlapping.
+        self.lock = aio.Lock()
         gc.collect()
 
         # Set up lvgl (deinit first if soft-rebooted so C pointers don't corrupt)
@@ -383,12 +386,13 @@ class EPaperDisplay:
                 if not (grayscale or mixed):
                     self._reverse_fb_bits = False
                 try:
-                    if mixed:
-                        from lib.epd_grayscale import mixed_update
-                        await mixed_update(self, black_left, red_left, black_right, red_right)
-                    else:
-                        await self.global_update(
-                            black_left, red_left, black_right, red_right, grayscale=grayscale)
+                    async with self.lock:
+                        if mixed:
+                            from lib.epd_grayscale import mixed_update
+                            await mixed_update(self, black_left, red_left, black_right, red_right)
+                        else:
+                            await self.global_update(
+                                black_left, red_left, black_right, red_right, grayscale=grayscale)
                 except BaseException:
                     self._panel_monochrome = False
                     raise
