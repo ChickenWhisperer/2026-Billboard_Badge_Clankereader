@@ -8,6 +8,7 @@ work (crop, resize, dither) happens in the phone's browser, so the badge just
 copies the finished frame straight into its framebuffers.
 
 by Travis Foss
+Vibe Coded with Claude
 
 ## Where each file goes
 
@@ -39,7 +40,7 @@ you send a photo, so you don't create that folder.
    placeholders with your hotspot's exact name and password, keeping the quotes:
 
    ```json
-   {"ssid": "Travis iPhone", "password": "yourpassword"}
+   {"ssid": "WifiName", "password": "yourpassword"}
    ```
 
    The name and password are case-sensitive. See the iPhone tips below if your
