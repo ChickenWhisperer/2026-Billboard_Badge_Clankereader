@@ -42,7 +42,7 @@ HOLD_FRAMES = 0        # >0: also push UNCHANGED pixels toward their own colour 
                        # (re-seats lazy beads; try 2-4; unbalanced DC, so keep it small)
 IDLE_STOP_MS = 60000   # release the display after this long without a page turn
 SAVE_EVERY = 8         # write bookmark every N page turns (flash wear)
-PIN_A, PIN_B = 39, 16  # User A / User B (active low) per community firmware dump
+PIN_A, PIN_B = 16, 39  # swapped: "A" is now the User B button (GPIO16), "B" the User A button (GPIO39)
 MARGIN_X, MARGIN_Y = 30, 22
 FONT_NAME  = "font_montserrat_24"
 LINE_SPACE = 6
