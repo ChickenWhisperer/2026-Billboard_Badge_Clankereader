@@ -234,7 +234,7 @@ class EPaperDisplay:
 
     def _lv_flush(self, disp, area, color_p):
         print("Calling EPaperDisplay._lv_flush (Viper)")
-        leds[0] = (0, 0, 50)
+        leds[0] = (0, 0, 32)
         leds.write()
         x1, y1 = area.x1, area.y1
         w = area.x2 - x1 + 1
@@ -331,7 +331,7 @@ class EPaperDisplay:
         self._check_modes(grayscale, mixed)
         gc.collect()
         self._png_blink = not self._png_blink
-        leds[0] = (0, 0, 50) if self._png_blink else (0, 0, 10)
+        leds[0] = (0, 0, 32) if self._png_blink else (0, 0, 10)
         leds.write()
         print(f"Loading {filename} This will take a while... {time.time()}")
         show_png(filename, self._framebuffer_black, self._framebuffer_red, row, col, grayscale, mixed, data)
@@ -344,7 +344,7 @@ class EPaperDisplay:
         state = False
         while self._refreshing_hw:
             state = not state
-            leds[0] = (40, 0, 0) if state else (0, 0, 0)
+            leds[0] = (8, 0, 0) if state else (0, 0, 0)
             leds.write()
             await aio.sleep_ms(200)
 
@@ -401,7 +401,7 @@ class EPaperDisplay:
                     self._refreshing_hw = False
                     await aio.sleep_ms(50)
 
-                leds[0] = (0, 40, 0)
+                leds[0] = (0, 32, 0)
                 leds.write()
                 await aio.sleep_ms(400)
                 leds.clear()
