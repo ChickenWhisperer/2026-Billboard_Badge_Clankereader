@@ -35,6 +35,12 @@ BOOK_DIR   = "/books"
 W          = 62        # max characters per line  (Montserrat 24 on 900 px)
 H          = 17        # lines per page
 LONG_MS    = 700       # hold time for "long press"
+FAST_REFRESH = True   # text pages via lib/epd_partial.py (~0.6 s); False = stock ~10 s refresh
+WIPE_EVERY = 100       # black/white ghost-clearing flash (~3.5 s) every N page turns; 0 = never
+DRIVE_FRAMES = 16      # of the 20 frames in a pull, drive changed pixels this many (stock: 10, max 19)
+HOLD_FRAMES = 0        # >0: also push UNCHANGED pixels toward their own colour this many frames
+                       # (re-seats lazy beads; try 2-4; unbalanced DC, so keep it small)
+IDLE_STOP_MS = 60000   # release the display after this long without a page turn
 SAVE_EVERY = 8         # write bookmark every N page turns (flash wear)
 PIN_A, PIN_B = 39, 16  # User A / User B (active low) per community firmware dump
 MARGIN_X, MARGIN_Y = 30, 22
@@ -287,12 +293,122 @@ def _find_display(app):
     raise RuntimeError("ereader: cannot locate the badge display object")
 
 
+def _ghost_table(drive, hold):
+    """400-byte transition table for register 0xB0, same layout as lib/epd_partial.partial_table().
+    5 tables x 10 groups x 8 bytes; table = old<<1|new; byte 0 of a group = levels, 2 bits per
+    phase (1 = VDH push to black, 2 = VDL push to white); frames alternate phase c, d."""
+    drive = max(1, min(19, drive))
+    hold = max(0, min(drive, hold))
+    t = bytearray(400)
+    for k in range(50):
+        t[8 * k:8 * k + 8] = b"\x00\x01\x01\x00\x01\x01\x01\x01"
+    for f in range(drive):
+        sh = 2 if f % 2 == 0 else 0
+        t[(10 + f // 2) * 8] |= 1 << sh      # white -> black
+        t[(20 + f // 2) * 8] |= 2 << sh      # black -> white
+    for f in range(hold):
+        sh = 2 if f % 2 == 0 else 0
+        t[(0 + f // 2) * 8] |= 2 << sh       # stays white: nudge to white
+        t[(30 + f // 2) * 8] |= 1 << sh      # stays black: nudge to black
+    return t
+
+
 class _Screen:
+    """Text pages: LVGL renders into the stock framebuffer, then lib/epd_partial.PartialEPD
+    shows only what changed (~0.6 s). Picture pages (red ink) use the stock full refresh.
+    The panel work runs in an asyncio task because the partial driver is async."""
+
     def __init__(self, app):
         import lvgl as lv
         self.lv = lv
         self.display = _find_display(app)
+        self.fast_ok = FAST_REFRESH
+        self.pending = None          # "text" | "image" | "stop"
+        self.task = None
+        self.panel = None
+        self.active = False          # partial session open (holds the display lock)
+        self.pages = 0
+        self.last_ms = time.ticks_ms()
 
+    # ---- worker
+    def _kick(self, kind):
+        self.pending = kind
+        if self.task is None:
+            try:
+                import asyncio as aio
+                self.task = aio.create_task(self._pump())
+            except Exception as ex:                  # no running loop: stock refresh
+                print("ereader: no async loop:", ex)
+                self.fast_ok = False
+                self._stock()
+
+    def _stock(self):
+        self.pending = None
+        self.display.update()
+
+    async def _pump(self):
+        import asyncio as aio
+        d = self.display
+        while True:
+            kind, self.pending = self.pending, None
+            try:
+                if kind == "text" and self.fast_ok:
+                    await self._show_text(d)
+                elif kind == "text":
+                    d.update()
+                elif kind == "image":
+                    await self._close()
+                    d.update()
+                elif kind == "stop":
+                    await self._close()
+                elif (self.active and
+                      time.ticks_diff(time.ticks_ms(), self.last_ms) > IDLE_STOP_MS):
+                    await self._close()      # never sit on the display lock while idle
+            except BaseException as ex:
+                print("ereader: fast refresh failed, using stock refresh:", repr(ex))
+                self.fast_ok = False
+                try:
+                    await self._close()
+                except BaseException:
+                    pass
+                if kind == "text":
+                    d.update()
+                if not isinstance(ex, Exception):
+                    raise
+            if kind:
+                self.last_ms = time.ticks_ms()
+            await aio.sleep_ms(30 if self.pending is None else 0)
+
+    async def _show_text(self, d):
+        if self.panel is None:
+            gc.collect()
+            from lib.epd_partial import PartialEPD
+            self.panel = PartialEPD()
+            self.panel._lut = _ghost_table(DRIVE_FRAMES, HOLD_FRAMES)
+        p = self.panel
+        if not self.active:
+            gc.collect()
+            await p.start()                  # waits for the stock driver, wipes to white (~3 s)
+            self.active = True
+            self.pages = 0
+        elif WIPE_EVERY and self.pages >= WIPE_EVERY:
+            await p.restart(wipe=True)       # black/white flash to take ghosting off (~3.5 s)
+            self.pages = 0
+        p.buf[:] = d._framebuffer_black      # LVGL's black plane: same 960x672 MONO_HLSB layout
+        await p.show()
+        self.pages += 1
+
+    async def _close(self):
+        if self.active and self.panel is not None:
+            self.active = False
+            await self.panel.stop()          # releases the display lock
+
+    def release(self):
+        """App is leaving: hand the panel back to the stock driver."""
+        if self.task is not None:
+            self.pending = "stop"
+
+    # ---- drawing
     def draw(self, body, footer_l="", footer_r="", header=None):
         lv, d = self.lv, self.display
         scr = lv.screen_active() if hasattr(lv, "screen_active") else lv.scr_act()
@@ -321,12 +437,14 @@ class _Screen:
         r = label(footer_r, 0, 672 - 44, 200)
         r.set_pos(960 - MARGIN_X - 200, 672 - 44)
         r.set_style_text_align(lv.TEXT_ALIGN.RIGHT, 0) if hasattr(lv, "TEXT_ALIGN") else None
-        for fn in ("timer_handler", "task_handler"):
-            if hasattr(lv, fn):
-                getattr(lv, fn)()
-                break
-        d.update()
-
+        if hasattr(d, "refresh_lvgl"):
+            d.refresh_lvgl()                 # render now into the framebuffers
+        else:
+            for fn in ("timer_handler", "task_handler"):
+                if hasattr(lv, fn):
+                    getattr(lv, fn)()
+                    break
+        self._kick("text")
 
     def draw_image(self, path):
         """Full-page dithered PNG (960x672, white/black/red palette) via the stock draw_png()."""
@@ -339,7 +457,7 @@ class _Screen:
         d.clear()
         gc.collect()
         d.draw_png(path)
-        d.update()
+        self._kick("image")
 
 
 # --------------------------------------------------------------- the app
@@ -394,6 +512,8 @@ class EReader(BaseApp):
         self.dirty = False
 
     def on_exit(self):
+        if self.screen:
+            self.screen.release()
         if self.book:
             self.book.save()
 
